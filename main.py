@@ -3,409 +3,243 @@ import pickle
 import pygame   
 import sys, pdb
 import argparse
-
-gap = 100
+from model import Model
+import torch
+from torchvision import transforms
+import torch.optim as optim
+from torch.optim import lr_scheduler
+device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 class State:
-	def __init__(self, p1, p2 , size):
+	def __init__(self, p1, p2 , size = 10):
 		self.size = size
-		self.board = np.zeros((size - 1, size , 2) , dtype = np.int32)
+		self.total_squares = (size - 1)**2
+		self.board = np.zeros((size, size - 1 , 2) , dtype = np.int32)
 		self.p1 = p1
 		self.p2 = p2
 		self.isEnd = False
 		self.boardHash = None
 		# init p1 plays first
-		self.playerSymbol = 1
-        self.grid_winners = np.zeros((size - 1, size - 1) , dtype = np.int32)
+		# self.playerSymbol = 1
+		self.no_of_boards = 0
+		self.grid_winners = np.zeros((size - 1, size - 1) , dtype = np.int32)
+		self.loss = nn.MSELoss()
 
 	def getHash(self):
 		string = str(self.board.reshape((size - 1) * size * 2))
-        self.boardHash = int(string , 2)
+		self.boardHash = int(string , 2)
 		return self.boardHash
 
+	def reset(self):
+		self.board = np.zeros((size, size - 1 , 2) , dtype = np.int32)
+		# self.playerSymbol = 1
+		self.no_of_boards = 0
+		self.grid_winners = np.zeros((size - 1, size - 1) , dtype = np.int32)
 
-    def available_actions(self):
-        available_array = np.where(self.board == 0)
-        available_array = np.array(np.transpose(available_array))
-        available_actions = [int("".join(map(str , index)) , 2) for index in available_array]
-        return available_actions
+	def available_actions(self):
+		available_array = np.where(self.board == 0)
+		available_array = np.array(np.transpose(available_array))
+		available_actions = [int("".join(map(str , index)) , 2) for index in available_array]
+		return available_actions
 
-    def updatestate(self, action):
-        string = bin(action)
-        grid_index  = [[int(i)] for i in string]
-        self.grid_index = 1
-        self.getHash()
-    # def available_positions
+	def updatestate(self, action):
+		string = bin(action)
+		grid_index  = [[int(i)] for i in string]
+		self.grid_index = 1
+		self.getHash()
+
+	def winner(self):
+		if sum(sum(self.grid_winners) == 1) > self.grid_winners.size/2:
+			self.isEnd = True
+			return 1
+		elif sum(sum(self.grid_winners) == -1) > self.grid_winners.size/2:
+			self.isEnd = True
+			return -1
+		else:
+			return 0
+
+	def reward(self , action , player):
+		action_string = bin(action)
+		[x, y, z]  = [int(i) for i in string]
+		if z == 0:
+			if self.board[x-1 , y, 0] and self.board[y, x-1, 1] and self.board[y+1, x-1, 1]:
+				self.grid_winners[x-1 , y] = player
+				self.no_of_boards += 1
+				return 1
+
+			elif self.board[x+1 , y, 0] and self.board[y, x, 1] and self.board[y+1, x, 1]:
+				self.grid_winners[x-1 , y] = player
+				self.no_of_boards += 1
+				return 1
+		elif z == 1:
+			if self.board[y+1, x, 0] and self.board[y, x, 0] and self.board[x+1, y, 1]:
+				self.grid_winners[y , x] = player
+				self.no_of_boards += 1
+				return 1
+			elif self.board[x-1 , y, 1] and self.board[y, x-1, 0] and self.board[y+1, x-1, 0]:
+				self.grid_winners[y , x-1] = player
+				self.no_of_boards += 1
+				return 1
+		return 0
+
+	def play(self, rounds=10000):
+		for i in range(rounds):
+			if i % 1000 == 0:
+				print("Rounds {}".format(i))
+			while not self.isEnd:
+				# Player 1
+				reward = 1
+				while reward == 1 and not self.isEnd:
+					actions = self.available_actions
+					# self.p1.current_state_Q_value = self.p1.next_state_Q_value
+					p1_action = self.p1.chooseAction(actions, self.board)
+					if self.p1.random_action_taken:
+						current_Q_value = self.next_state_Q_value[p1_action]
+					else:
+						current_Q_value = self.p1.current_Q_value
+					reward = self.reward(p1_action , self.p1.symbol)
+					if self.winner() == p1.symbol:
+						reward += 10000
+					if self.no_of_boards == self.total_squares:
+						target = reward
+						self.isEnd = True
+					# take action and upate board state
+					else:
+						self.updatestate(p1_action)
+						with torch.no_grad():
+							tr = transforms.ToTensor()
+							outputs = self.p1.model(tr(self.board))
+						outputs_numpy = outputs.numpy()
+						self.p1.next_state_Q_value = outputs_numpy
+						valid_outputs = outputs[tuple(self.available_actions)]
+						Q_value = np.max(valid_outputs)
+						target = reward + Q_value
+
+					# Calculate loss and update
+					with torch.set_grad_enabled(True):
+						target = target.to(device)
+						current_Q_value = current_Q_value.to(device)
+						loss = self.loss(current_Q_value , target)
+						loss.backward()
+						self.p1.optimizer.step()
+
+				reward = 1
+				while(reward == 1 and not self.isEnd):
+					actions = self.available_actions
+					# self.p1.current_state_Q_value = self.p1.next_state_Q_value
+					p2_action = self.p2.chooseAction(actions, self.board)
+					current_Q_value = self.next_state_Q_value[p1_action]
+					reward = self.reward(p2_action , self.p2.symbol)
+					if self.winner() == p2.symbol:
+						reward += 10000
+					if self.no_of_boards == self.total_squares:
+						target = reward
+						self.isEnd = True
+					# take action and upate board state
+					else:
+						self.updatestate(p1_action)
+						with torch.no_grad():
+							tr = transforms.ToTensor()
+							outputs = self.p2.model(tr(self.board))
+						outputs_numpy = outputs.numpy()
+						self.p2.next_state_Q_value = outputs_numpy
+						valid_outputs = outputs[tuple(self.available_actions)]
+						Q_value = np.max(valid_outputs)
+						target = reward + Q_value
+					with torch.set_grad_enable(True):
+						target = target.to(device)
+						current_Q_value = current_Q_value.to(device)
+						loss = self.loss(current_Q_value , target)
+						loss.backward()
+						self.p2.optimizer.step()
+			self.p1.savePolicy()
+			self.p2.savePolicy()
+			self.p1.scheduler.step()
+			self.p2.scheduler.step()
+
+
+
+						
+				# board_hash = self.getHash()
+				# self.p1.addState(board_hash)
+				# check board status if it is end
+
+		 
+	# def available_positions
 
 
 class Player:
-    def __init__(self, name, exp_rate=0.3):
-        self.name = name
-        self.states = []  # record all positions taken
-        self.lr = 0.2
-        self.exp_rate = exp_rate
-        self.decay_gamma = 0.9
-        self.states_value = {}  # state -> value
-        self.boxes = 0
+	def __init__(self, name, size, symbol, exp_rate=0.3):
+		self.name = name
+		# self.states = []  # record all positions taken
+		# self.lr = 0.2
+		# self.exp_rate = exp_rate
+		# self.decay_gamma = 0.9
+		self.model = Model(size).to(device)
+		self.current_Q_value = 0
+		self.next_state_Q_value = []
+		self.symbol = symbol
+		self.optimizer = optim.Adam(self.model.parameters(), lr=0.0001)
+		self.scheduler = lr_scheduler.StepLR(self.optimizer, step_size=10, gamma=0.2)
+	# def getHash(self, board):
+	# 	boardHash = str(board.reshape(board.shape[0] * bpard.shape[1] * board.shape[2]))
+	# 	return boardHash
 
-    def getHash(self, board):
-        boardHash = str(board.reshape(board.shape[0] * bpard.shape[1] * board.shape[2]))
-        return boardHash
+	def chooseAction(self, actions, current_board):
+		if np.random.uniform(0, 1) <= self.exp_rate:
+			# take random action
+			# idx = np.random.choice(len(positions))
+			action = np.random.choice(actions)
+			self.random_action_taken = True
+		else:
+			outputs = self.next_state_Q_value
+			valid_outputs = outputs[tuple(actions)]
+			action = actions[np.argmax(valid_outputs)]
+			self.current_Q_value = np.max(valid_outputs)
+			self.random_action_taken = False
+		# print("{} takes action {}".format(self.name, action))
+		return action
 
-    def chooseAction(self, positions, current_board, symbol):
-        if np.random.uniform(0, 1) <= self.exp_rate:
-            # take random action
-            idx = np.random.choice(len(positions))
-            action = positions[idx]
-        else:
-            value_max = -999
-            for p in positions:
-                next_board = current_board.copy()
-                next_board[p] = symbol
-                next_boardHash = self.getHash(next_board)
-                value = 0 if self.states_value.get(next_boardHash) is None else self.states_value.get(next_boardHash)
-                # print("value", value)
-                if value >= value_max:
-                    value_max = value
-                    action = p
-        # print("{} takes action {}".format(self.name, action))
-        return action
+	# append a hash state
+	# def addState(self, state):
+	# 	self.states.append(state)
 
-    # append a hash state
-    def addState(self, state):
-        self.states.append(state)
+	# # at the end of game, backpropagate and update states value
+	# def feedReward(self, reward):
+	# 	for st in reversed(self.states):
+	# 		if self.states_value.get(st) is None:
+	# 			self.states_value[st] = 0
+	# 		self.states_value[st] += self.lr * (self.decay_gamma * reward - self.states_value[st])
+	# 		reward = self.states_value[st]
 
-    # at the end of game, backpropagate and update states value
-    def feedReward(self, reward):
-        for st in reversed(self.states):
-            if self.states_value.get(st) is None:
-                self.states_value[st] = 0
-            self.states_value[st] += self.lr * (self.decay_gamma * reward - self.states_value[st])
-            reward = self.states_value[st]
+	# def reset(self):
+	# 	self.states = []
 
-    def reset(self):
-        self.states = []
+	def savePolicy(self):
+		torch.save(self.model.state_dict() , name + "_Q_dict")
 
-    def savePolicy(self):
-        fw = open('policy_' + str(self.name), 'wb')
-        pickle.dump(self.states_value, fw)
-        fw.close()
-
-    def loadPolicy(self, file):
-        fr = open(file, 'rb')
-        self.states_value = pickle.load(fr)
-        fr.close()
-
-
-class Game:
-    def __init__(self):
-        self.grid_size = 10  # default
-        if len(sys.argv) > 1:
-            self.grid_size = int(sys.argv[1])
-
-        # It turns out that there are nice structures when setting ~0.75 walls per slot
-        self.start_walls = int(0.75 * self.grid_size ** 2)
-
-        self.accept_clicks = True
-
-        # variables for the boxes for each player (x would be computer)
-        self.a_boxes = 0
-        self.b_boxes = 0
-        self.x_boxes = 0
-
-        self.turn = "X"
-        self.caption = "'s turn    "
-
-        # 0 empty 1 is A 2 is B and 3 is X
-        self.grid_status = np.zeros((self.grid_size, self.grid_size), np.int)
-        self.upper_walls_set_flags = np.zeros((self.grid_size, self.grid_size), np.dtype(bool))
-        self.left_walls_set_flags = np.zeros((self.grid_size, self.grid_size), np.dtype(bool))
-
-        # set the outer walls
-        for column in range(self.grid_size):
-            for row in range(self.grid_size):
-                if column == 0:
-                    self.left_walls_set_flags[column][row] = True
-                if row == 0:
-                    self.upper_walls_set_flags[column][row] = True
-
-        # initialize pygame
-        pygame.init()
-
-        # set the display size (one slot has 30x30 pixels; Walls: 4x26 Box: 26x26)
-        self.screen = pygame.display.set_mode([30 * self.grid_size + 4 + gap, 30 * self.grid_size + 4 + gap])
-
-        # load all images
-        self.empty = pygame.image.load("pics/empty.png")
-        self.A = pygame.image.load("pics/A.png")
-        self.B = pygame.image.load("pics/B.png")
-        self.X = pygame.image.load("pics/X.png")
-        self.block = pygame.image.load("pics/block.png")
-        self.lineX = pygame.image.load("pics/lineX.png")
-        self.lineXempty = pygame.image.load("pics/lineXempty.png")
-        self.lineY = pygame.image.load("pics/lineY.png")
-        self.lineYempty = pygame.image.load("pics/lineYempty.png")
-
-        tries = 0
-        # set the start walls randomly but do not create any opportunity to directly close boxes
-        # while self.start_walls > 0 and tries < 4*self.grid_size**2:
-        #     x = np.random.randint(self.grid_size)
-        #     y = np.random.randint(self.grid_size)
-        #     up = np.random.randint(2)
-
-        #     if up:
-        #         if not self.upper_walls_set_flags[x][y] \
-        #                 and self.get_number_of_walls(x, y) < 2 \
-        #                 and self.get_number_of_walls(x, y - 1) < 2:
-        #             self.upper_walls_set_flags[x][y] = True
-        #             self.start_walls -= 1
-        #     else:
-        #         if not self.left_walls_set_flags[x][y] \
-        #                 and self.get_number_of_walls(x, y) < 2 \
-        #                 and self.get_number_of_walls(x - 1, y) < 2:
-        #             self.left_walls_set_flags[x][y] = True
-        #             self.start_walls -= 1
-
-        #     tries += 1
-
-        # now it's the first players turn
-        self.turn = "A"
-        self.show()
-
-        while True:
-            # go through all events and check the types
-            for event in pygame.event.get():
-                # quit the game when the player closes it
-                if event.type == pygame.QUIT:
-                    pygame.quit()
-                    exit(0)
-
-                # left click
-                elif event.type == pygame.MOUSEBUTTONDOWN and pygame.mouse.get_pressed()[0]:
-                    if not self.accept_clicks:
-                        continue
-
-                    # get the current position of the cursor
-                    x = pygame.mouse.get_pos()[0]
-                    y = pygame.mouse.get_pos()[1]
-
-                    # check whether it was a not set wall that was clicked
-                    wall_x, wall_y = self.get_wall(x, y)
-
-                    # pdb.set_trace()
-                    if not (wall_x >= 0 and wall_y >= 0):
-                        continue
-
-                    upper_wall = wall_y % 30 == 0
-
-                    if upper_wall:
-                        if not self.upper_walls_set_flags[wall_x//30][wall_y//30]:
-                            self.upper_walls_set_flags[wall_x//30][wall_y//30] = True
-                            self.screen.blit(self.lineX, (wall_x + gap/2, wall_y + gap/2))
-                        else:
-                            continue
-                    else:
-                        if not self.left_walls_set_flags[wall_x//30][wall_y//30]:
-                            self.left_walls_set_flags[wall_x//30][wall_y//30] = True
-                            self.screen.blit(self.lineY, (wall_x + gap/2, wall_y + gap/2))
-                        else:
-                            continue
-
-                    if not self.set_all_slots() > 0:
-                        if self.turn == "A":
-                            self.turn = "B"
-                        elif self.turn == "B":
-                            self.turn = "A"
-
-                    if self.won():
-                        self.accept_clicks = False
-
-                    else:
-
-                        # set the display caption
-                        pygame.display.set_caption(self.turn + self.caption + "     A:" + str(
-                            self.a_boxes) + "   B:" + str(self.b_boxes))
-
-                        # update the players screen
-                        pygame.display.flip()
-
-    def get_number_of_walls(self, slot_column, slot_row):
-        """
-        Get the number of set walls around the passed slot
-        :param slot_column: x of the slot
-        :param slot_row: y of the slot
-        :return: number of set walls
-        """
-        number_of_walls = 0
-
-        if slot_column == self.grid_size - 1:
-            number_of_walls += 1
-        elif self.left_walls_set_flags[slot_column + 1][slot_row]:
-            number_of_walls += 1
-
-        if slot_row == self.grid_size - 1:
-            number_of_walls += 1
-        elif self.upper_walls_set_flags[slot_column][slot_row + 1]:
-            number_of_walls += 1
-
-        if self.left_walls_set_flags[slot_column][slot_row]:
-            number_of_walls += 1
-
-        if self.upper_walls_set_flags[slot_column][slot_row]:
-            number_of_walls += 1
-
-        return number_of_walls
-
-    @staticmethod
-    def get_wall(pos_x, pos_y):
-        pos_x -= gap/2
-        pos_y -= gap/2
-        rest_x = pos_x % 30
-        rest_y = pos_y % 30
-
-        wall_slot_x = pos_x//30
-        wall_slot_y = pos_y//30
-
-        # in a corner
-        if rest_x < 4 and rest_y < 4:
-            return -1, -1
-
-        if rest_x < 4:
-            # is left wall of the slot
-            return int(wall_slot_x*30), int(wall_slot_y*30 + 4)
-
-        if rest_y < 4:
-            # is upper wall of the slot
-            return int(wall_slot_x*30 + 4), int(wall_slot_y*30)
-
-        # inside the box => not a wall
-        return -1, -1
-
-    def set_all_slots(self):
-        """
-        Find all newly closed boxes and close them for the current player
-        :return: number of closed boxes
-        """
-        to_return = 0
-
-        for column_ in range(self.grid_size):
-            for row_ in range(self.grid_size):
-                if self.grid_status[column_][row_] != 0 or self.get_number_of_walls(column_, row_) < 4:
-                    continue
-
-                if self.turn == "A":
-                    self.grid_status[column_][row_] = 1
-                    self.screen.blit(self.A, (column_ * 30 + 4 + gap/2, row_ * 30 + 4 + gap/2))
-                    self.a_boxes += 1
-                elif self.turn == "B":
-                    self.grid_status[column_][row_] = 2
-                    self.screen.blit(self.B, (column_ * 30 + 4 + gap/2, row_ * 30 + 4 + gap/2))
-                    self.b_boxes += 1
-                elif self.turn == "X":
-                    self.grid_status[column_][row_] = 3
-                    self.screen.blit(self.X, (column_ * 30 + 4 + gap/2, row_ * 30 + 4 + gap/2))
-                    self.x_boxes += 1
-
-                to_return += 1
-
-        return to_return
-
-    def won(self):
-        """
-        Check whether the game was finished
-        If so change the caption to display the winner
-        :return: won or not
-        """
-        if self.a_boxes + self.b_boxes + self.x_boxes == self.grid_size ** 2:
-            if self.a_boxes < self.b_boxes:
-                won_caption = "Player B won!   Congrats"
-            elif self.b_boxes < self.a_boxes:
-                won_caption = "Player A won!   Congrats"
-            else:
-                won_caption = "It's a tie!"
-
-            # set the display caption
-            pygame.display.set_caption(won_caption)
-
-            # update the players screen
-            pygame.display.flip()
-
-            return True
-        else:
-            return False
-
-    def show(self):
-        """
-        Reload the screen
-        Use the current grid and wall information to
-        update the players screen
-        """
-        self.screen.fill(0)
-
-        # loop over all slots
-        for column in range(self.grid_size):
-            for row in range(self.grid_size):
-                # 
-
-                # 
-                x, y = column * 30, row * 30
-                x += gap/2
-                y += gap/2
-                self.screen.blit(self.block, (x, y))
-                x += 4
-                if not self.upper_walls_set_flags[column][row]:
-                    self.screen.blit(self.lineXempty, (x, y))
-                else:
-                    self.screen.blit(self.lineX, (x, y))
-                x -= 4
-                y += 4
-                if not self.left_walls_set_flags[column][row]:
-                    self.screen.blit(self.lineYempty, (x, y))
-                else:
-                    self.screen.blit(self.lineY, (x, y))
-
-                # calculate x and y in pixels
-                x, y = column * 30 + 4, row * 30 + 4
-                x += gap/2
-                y += gap/2
-
-                if self.grid_status[column][row] == 0:
-                    self.screen.blit(self.empty, (x, y))
-                elif self.grid_status[column][row] == 1:
-                    self.screen.blit(self.A, (x, y))
-                elif self.grid_status[column][row] == 2:
-                    self.screen.blit(self.B, (x, y))
-                elif self.grid_status[column][row] == 3:
-                    self.screen.blit(self.X, (x, y))
-
-        pygame.display.set_caption(self.turn + self.caption + "     A:" + str(self.a_boxes) + "   B:" + str(
-            self.b_boxes))
-        pygame.display.flip()
-
+	# def loadPolicy(self, file):
+	# 	fr = open(file, 'rb')
+	# 	self.states_value = pickle.load(fr)
+	# 	fr.close()
 
 
 
 if __name__ == "__main__":
-    # training
-    # p1 = Player("p1")
-    # p2 = Player("p2")
+	# training
+	size = int(sys.argv[1])
+	p1 = Player("p1" , size , 1)
+	p2 = Player("p2" , size , -1)
 
-    # st = State(p1, p2)
-    # print("training...")
-    # st.play(50000)
+	st = State(p1, p2 , size)
+	print("training...")
+	st.play(50000)
 
-    # # play with human
-    # p1 = Player("computer", exp_rate=0)
-    # p1.loadPolicy("policy_p1")
+	# play with human
+	# p1 = Player("computer", exp_rate=0)
+	# p1.loadPolicy("policy_p1")
 
-    # p2 = HumanPlayer("human")
+	# p2 = HumanPlayer("human")
 
-    # st = State(p1, p2)
-    # st.play2()
-    # initialize pygame
-    # parser = argparse.ArgumentParser(description='process inputs')
-    # parser.add_argument('--gametype', '-g', choices=['test', 'train'])
-    # parser.add_argument('--size', '-s', type=int, choices=[4, 10, 20])
-    # parser.parse_args()
-    # print(args.accumulate()
-    game = Game()
+	# st = State(p1, p2)
+	# st.play2()
