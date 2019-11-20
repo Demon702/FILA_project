@@ -9,18 +9,32 @@ gap = 100
 class State:
 	def __init__(self, p1, p2 , size):
 		self.size = size
-		self.board = np.zeros((size, size - 1 , 3) , dtype = np.int32)
+		self.board = np.zeros((size - 1, size , 2) , dtype = np.int32)
 		self.p1 = p1
 		self.p2 = p2
 		self.isEnd = False
 		self.boardHash = None
 		# init p1 plays first
 		self.playerSymbol = 1
+        self.grid_winners = np.zeros((size - 1, size - 1) , dtype = np.int32)
 
 	def getHash(self):
-		self.boardHash = str(self.board.reshape(size * (size - 1) * 3))
+		string = str(self.board.reshape((size - 1) * size * 2))
+        self.boardHash = int(string , 2)
 		return self.boardHash
 
+
+    def available_actions(self):
+        available_array = np.where(self.board == 0)
+        available_array = np.array(np.transpose(available_array))
+        available_actions = [int("".join(map(str , index)) , 2) for index in available_array]
+        return available_actions
+
+    def updatestate(self, action):
+        string = bin(action)
+        grid_index  = [[int(i)] for i in string]
+        self.grid_index = 1
+        self.getHash()
     # def available_positions
 
 
