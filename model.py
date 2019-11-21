@@ -14,7 +14,7 @@ class Model(nn.Module):
         self.size = size
         self.relu = nn.ReLU()
         self.fc1 = nn.Linear(4 * (self.size -2) * (self.size -2) , 16 * (self.size -2) * (self.size -2))
-        self.fc2 = nn.Linear(16 * (self.size -2) * (self.size -2) , self.size * (self.size - 1))
+        self.fc2 = nn.Linear(16 * (self.size -2) * (self.size -2) , self.size * (self.size - 1) * 2)
         # self.feature_extractor_part1 = nn.Sequential(
         #     nn.Conv2d(1, 20, kernel_size=5),
         #     nn.ReLU(),
@@ -67,14 +67,19 @@ class Model(nn.Module):
 
     def forward(self, input):
         # x = x.squeeze(0)
-        rows = input[0:1]
-        columns = input[1:]
-        columns = torch.transpose(columns , 1 , 2)
-
-        feature1 = self.relu(self.cnn1(torch.cat((rows[:, :-1, :] , columns[:,:,:-1]) , 0)))
-        feature2 = self.relu(self.cnn2(torch.cat((rows[:, :-1, :] , columns[:,:,1:]) , 0)))
-        feature3 = self.relu(self.cnn3(torch.cat((rows[:, 1:, :] , columns[:,:,:-1]) , 0)))
-        feature4 = self.relu(self.cnn4(torch.cat((rows[:, 1:, :] , columns[:,:,1:]) , 0)))
+        input = input.float()
+        # print(input.shape)
+        rows = input[0]
+        rows = rows.unsqueeze(0).unsqueeze(0)
+        columns = input[1]
+        columns = torch.transpose(columns , 0, 1)
+        columns = columns.unsqueeze(0).unsqueeze(0)
+        # print(columns.shape)
+        # print(torch.cat((rows[:,:, :-1, :] , columns[:,:,:,:-1]) , 0).shape)
+        feature1 = self.relu(self.cnn1(torch.cat((rows[:,:, :-1, :] , columns[:,:,:,:-1]) , 1)))
+        feature2 = self.relu(self.cnn2(torch.cat((rows[:,:, :-1, :] , columns[:,:,:,1:]) , 1)))
+        feature3 = self.relu(self.cnn3(torch.cat((rows[:,:, 1:, :] , columns[:,:,:,:-1]) , 1)))
+        feature4 = self.relu(self.cnn4(torch.cat((rows[:,:, 1:, :] , columns[:,:,:,1:]) , 1)))
         
         features = torch.cat((feature1, feature2 , feature3 , feature4) , 0)
         all_features = features.view(-1 , 4 * (self.size -2) * (self.size -2))
@@ -83,24 +88,10 @@ class Model(nn.Module):
         # H = H.view(-1, 50 * 53 * 53)
         # H = self.feature_extractor_part2(H)  # NxL
 
-        A = self.attention(H)  # NxK
-        G = self.gate(H)     # N*K
 
-        Gated_attention = self.weight(A * G) # N * K
-        # Gated_attention = self.weight(A)
-        # print(Gated_attention.shape)
-        Gated_attention = torch.transpose(Gated_attention, 1, 0)  # KxN
-        Weights = F.softmax(Gated_attention, dim=1)  # softmax over N
-        # print(Weights)
-        Y_prob = torch.mm(Weights , H)  # KxL
-        # Weighted_mean = Weighted_mean.view(1 , -1)
-
-        # Y_prob = self.classifier(Weighted_mean)
-        # Y_prob = F.softmax(Y_prob , dim = 1)
-        # print(Y_prob.shape)
-        preds = torch.ge(Y_prob, 0.5).float()
-
-        return Y_prob  , preds  , Weights , H
+        all_features = self.relu(self.fc1(all_features))
+        Q_values = self.fc2(all_features)
+        return Q_values.squeeze(0)
 
     # AUXILIARY METHODS
     # def calculate_classification_error(self, X, Y):
@@ -110,10 +101,3 @@ class Model(nn.Module):
 
     #     return error, Y_hat
 
-    def calculate_objective(self, X, Y):
-        Y = Y.float()
-        Y_prob, _, A = self.forward(X)
-        Y_prob = torch.clamp(Y_prob, min=1e-5, max=1. - 1e-5)
-        neg_log_likelihood = -1. * (Y * torch.log(Y_prob) + (1. - Y) * torch.log(1. - Y_prob))  # negative log bernoulli
-
-        return neg_log_likelihood, A
