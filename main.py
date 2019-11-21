@@ -8,7 +8,7 @@ import torch
 from torchvision import transforms
 import torch.optim as optim
 from torch.optim import lr_scheduler
-device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+# device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 class State:
 	def __init__(self, p1, p2 , size = 10):
@@ -23,7 +23,7 @@ class State:
 		# self.playerSymbol = 1
 		self.no_of_boards = 0
 		self.grid_winners = np.zeros((size - 1, size - 1) , dtype = np.int32)
-		self.loss = nn.MSELoss()
+		self.loss = torch.nn.MSELoss()
 
 	def getHash(self):
 		string = str(self.board.reshape((size - 1) * size * 2))
@@ -117,8 +117,8 @@ class State:
 
 					# Calculate loss and update
 					with torch.set_grad_enabled(True):
-						target = target.to(device)
-						current_Q_value = current_Q_value.to(device)
+						target = target.cpu()
+						current_Q_value = current_Q_value.cpu()
 						loss = self.loss(current_Q_value , target)
 						loss.backward()
 						self.p1.optimizer.step()
@@ -147,8 +147,8 @@ class State:
 						Q_value = np.max(valid_outputs)
 						target = reward + Q_value
 					with torch.set_grad_enable(True):
-						target = target.to(device)
-						current_Q_value = current_Q_value.to(device)
+						target = target.cpu()
+						current_Q_value = current_Q_value.cpu()
 						loss = self.loss(current_Q_value , target)
 						loss.backward()
 						self.p2.optimizer.step()
@@ -171,13 +171,18 @@ class State:
 class Player:
 	def __init__(self, name, size, symbol, exp_rate=0.3):
 		self.name = name
+		self.exp_rate = exp_rate
 		# self.states = []  # record all positions taken
 		# self.lr = 0.2
 		# self.exp_rate = exp_rate
 		# self.decay_gamma = 0.9
-		self.model = Model(size).to(device)
+		self.model = Model(size).cpu()
 		self.current_Q_value = 0
-		self.next_state_Q_value = []
+		with torch.no_grad():
+			tr = transforms.ToTensor()
+			outputs = self.p1.model(tr(self.board))
+		outputs_numpy = outputs.numpy()
+		self.next_state_Q_value = outputs_numpy
 		self.symbol = symbol
 		self.optimizer = optim.Adam(self.model.parameters(), lr=0.0001)
 		self.scheduler = lr_scheduler.StepLR(self.optimizer, step_size=10, gamma=0.2)
@@ -193,6 +198,7 @@ class Player:
 			self.random_action_taken = True
 		else:
 			outputs = self.next_state_Q_value
+			print(outputs)
 			valid_outputs = outputs[tuple(actions)]
 			action = actions[np.argmax(valid_outputs)]
 			self.current_Q_value = np.max(valid_outputs)
