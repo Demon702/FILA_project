@@ -33,6 +33,12 @@ class State:
 		self.boardHash = int(string , 2)
 		return self.boardHash
 
+	def tuple_to_number(self , index ):
+		return 2*(self.size - 1)*index[0] + 2*index[1] + index[2]
+
+	def number_to_tuple(self , number):
+		return [number//(2*(self.size - 1)) , (number % (2*(self.size - 1)))//2 , number % 2]
+
 	def reset(self):
 		self.board = np.zeros((size, size - 1 , 2) , dtype = np.int32)
 		# self.playerSymbol = 1
@@ -102,7 +108,7 @@ class State:
 
 				self.p1.next_state_Q_value = outputs_numpy
 
-				while reward == 1 and not self.isEnd:
+				while reward >= 1 and not self.isEnd:
 					# print("---------------------------------------------------------")
 					actions = self.available_actions()
 					# print(actions)
@@ -111,9 +117,12 @@ class State:
 					current_Q_value = self.p1.next_state_Q_value[p1_action]
 					reward = self.reward(p1_action , self.p1.symbol)
 					winner = self.winner()
-					self.winners.append(winner)
+					# if winner == 1 or winner == -1:
+					# 	print(p1.symbol , winner)
 					if winner == p1.symbol:
+						# print("entered")
 						reward += 10000
+						self.winners.append(p1.symbol)
 					if self.no_of_boards == self.total_squares:
 						target = reward
 						self.isEnd = True
@@ -134,7 +143,7 @@ class State:
 						target = reward + Q_value
 					# if p1_action in [16, 34, 145, 163]:
 					# print( reward , "p1")
-
+					self.p1.optimizer.zero_grad()
 					# Calculate loss and update
 					with torch.set_grad_enabled(True):
 						target = torch.tensor(target).cpu().float()
@@ -150,7 +159,7 @@ class State:
 					outputs = self.p2.model(tr(self.board))
 				outputs_numpy = outputs.numpy()
 				self.p2.next_state_Q_value = outputs_numpy
-				while(reward == 1 and not self.isEnd):
+				while(reward >= 1 and not self.isEnd):
 					# print("-------------------------------------------------------")
 					actions = self.available_actions()
 					# print(len(actions))
@@ -159,8 +168,11 @@ class State:
 					current_Q_value = self.p2.next_state_Q_value[p2_action]
 					reward = self.reward(p2_action , self.p2.symbol)
 					winner = self.winner()
+					# if winner == 1 or winner == -1:
+						# print(p2.symbol , winner)
 					self.winners.append(winner)
 					if winner == p2.symbol:
+						# print("entered")
 						reward += 10000
 					if self.no_of_boards == self.total_squares:
 						target = reward
@@ -182,6 +194,7 @@ class State:
 						target = reward + Q_value
 					# if p2_action in [16, 34, 145, 163]:
 					# print(p2_action , reward , "p2")
+					self.p2.optimizer.zero_grad()
 					with torch.set_grad_enabled(True):
 						target = torch.tensor(target).cpu().float()
 						tr = transforms.ToTensor()
@@ -189,6 +202,7 @@ class State:
 						loss = self.loss(current_Q_value , target)
 						loss.backward()
 						self.p2.optimizer.step()
+			# print(reward)
 			self.p1.savePolicy()
 			self.p2.savePolicy()
 			self.p1.scheduler.step()
@@ -196,19 +210,116 @@ class State:
 			# print(self.board)
 			# print(self.grid_winners)
 			self.reset()
-
+			# print(self.p2.next_state_Q_value)
 
 						
 				# board_hash = self.getHash()
 				# self.p1.addState(board_hash)
 				# check board status if it is end
 
-		 
+
+	def play2(self):
+		scr = Screen(self.size)
+		turn = "A"
+		scr.show(self.board, self.grid_winners)
+		self.p2.model = Model(self.size)
+		self.p2.model.load_state_dict(torch.load("data/" + self.p2.name + "_Q_dict"))
+		# A is human
+		while not self.isEnd:
+			# print("self.isEnd" , self.isEnd)
+			for event in pygame.event.get():
+				if turn == "A":
+					# quit the game when the player closes it
+					reward = 0
+					if event.type == pygame.QUIT:
+						pygame.quit()
+						exit(0)
+
+					# left click
+					elif event.type == pygame.MOUSEBUTTONDOWN and pygame.mouse.get_pressed()[0]:
+						# if not self.accept_clicks:
+						#     continue
+
+						# get the current position of the cursor
+						x = pygame.mouse.get_pos()[0]
+						y = pygame.mouse.get_pos()[1]
+
+						# check whether it was a not set wall that was clicked
+						z = scr.get_wall(x, y, self.board)
+						print("z : ", z)
+						if z == -1:
+							continue
+
+
+
+					#  z to action number
+
+						# print("---------------------------------------------------------")
+						available_actions = self.available_actions()
+						chosen_action = self.tuple_to_number(z)
+						if chosen_action not in available_actions:
+							continue
+						# print(actions)
+						# self.p1.current_state_Q_value = self.p1.next_state_Q_value
+						reward = self.reward(chosen_action , self.p1.symbol)
+						winner = self.winner()
+						if winner == p1.symbol:
+							reward += 10000
+							self.winners.append(winner)
+						if self.no_of_boards == self.total_squares:
+							target = reward
+							self.isEnd = True
+						# take action and upate board state
+						else:
+							self.old_board = self.board.copy()
+							self.updatestate(chosen_action)
+						scr.show(self.board, self.grid_winners)
+						if reward >= 1:
+							continue
+						else :
+							turn = "B"
+
+
+			if turn == "B":
+				print("came here")			
+				reward = 1
+				with torch.no_grad():
+					tr = transforms.ToTensor()
+					outputs = self.p2.model(tr(self.board))
+				outputs_numpy = outputs.numpy()
+				self.p2.next_state_Q_value = outputs_numpy
+				while(reward >= 1 and not self.isEnd):
+					# print("-------------------------------------------------------")
+					actions = self.available_actions()
+					# print(len(actions))
+					# self.p1.current_state_Q_value = self.p1.next_state_Q_value
+					p2_action = self.p2.chooseAction(actions, self.board)
+					current_Q_value = self.p2.next_state_Q_value[p2_action]
+					reward = self.reward(p2_action , self.p2.symbol)
+					winner = self.winner()
+					if winner == p2.symbol:
+						reward += 10000
+						self.winners.append(winner)
+					if self.no_of_boards == self.total_squares:
+						target = reward
+						self.isEnd = True
+					# take action and upate board state
+					else:
+						self.old_board = self.board.copy()
+						self.updatestate(p2_action)
+					scr.show(self.board, self.grid_winners)
+				turn = "A"
+
+
+
+
+				
+	
 	# def available_positions
 
 
 class Player:
-	def __init__(self, name, size, symbol, exp_rate=0.3):
+	def __init__(self, name, size, symbol, exp_rate=0.1):
 		self.name = name
 		self.exp_rate = exp_rate
 		# self.states = []  # record all positions taken
@@ -218,7 +329,7 @@ class Player:
 		self.model = Model(size).cpu()
 		self.current_Q_value = 0
 		self.symbol = symbol
-		self.optimizer = optim.Adam(self.model.parameters(), lr=0.0001)
+		self.optimizer = optim.Adam(self.model.parameters(), lr=0.01)
 		self.scheduler = lr_scheduler.StepLR(self.optimizer, step_size=10, gamma=0.2)
 	# def getHash(self, board):
 	# 	boardHash = str(board.reshape(board.shape[0] * bpard.shape[1] * board.shape[2]))
@@ -294,8 +405,8 @@ class Screen:
 
 
 	def show(self, p, wins):
-		print("P : \n", p)
-		print("wins : \n:", wins)
+		# print("P : \n", p)
+		# print("wins : \n:", wins)
 		for i in range(self.n):
 			for j in range(self.n):
 				x, y = i*30 + self.gap, j*30 + self.gap
@@ -336,38 +447,65 @@ class Screen:
 
 		pygame.display.flip()
 
+	def get_wall(self, x, y, p):
+		x -= self.gap
+		y -= self.gap
+		row = x//30
+		col = y//30
+		if x%30 <= 4 : 
+			# if p[col][row][1]:
+			# 	return -1
+			return (row, col, 1)
+		elif y%30 <=4:
+			# if p[row][col][0]:
+			# 	return -1
+			return (col, row, 0)
+		return -1
 
 
 if __name__ == "__main__":
 	# training
-	# size = int(sys.argv[1])
-	# p1 = Player("p1" , size , 1)
-	# p2 = Player("p2" , size , -1)
+	if int(sys.argv[2]):
+		size = int(sys.argv[1])
+		p1 = Player("p1" , size , 1)
+		p2 = Player("p2" , size , -1)
 
-	# st = State(p1, p2 , size)
-	# print("training...")
-	# st.play(10000)
-	# st.winners = np.array(st.winners)
-	# print(sum(st.winners == 1))
-	# print(sum(st.winners == -1))
+		st = State(p1, p2 , size)
+		print("training...")
+		st.play(50000)
+		st.winners = np.array(st.winners)
+		print(sum(st.winners == 1))
+		print(sum(st.winners == -1))
+		print(st.winners)
 
+	else:
+		# play with human
+		# p1 = Player("computer", exp_rate=0)
+		# p1.loadPolicy("policy_p1")
 
-	# play with human
-	# p1 = Player("computer", exp_rate=0)
-	# p1.loadPolicy("policy_p1")
+		# p2 = HumanPlayer("human")
 
-	# p2 = HumanPlayer("human")
+		# st = State(p1, p2)
+		# st.play2()
+		# n = int(sys.argv[1])
+		# scr = Screen(n)
+		# p = np.random.randint(2, size=(n, n-1, 2))
+		# wins = np.random.randint(3, size=(n-1, n-1))
+		# wins -= 1
+		# # p = np.load('p.npy')
+		# # while True:
+		# import time
+		# scr.show(p, wins)
+		# time.sleep(30)
+		size = int(sys.argv[1])
+		p1 = Player("p1" , size , 1)
+		p2 = Player("p2" , size , -1)
 
-	# st = State(p1, p2)
-	# st.play2()
-	n = int(sys.argv[1])
-	scr = Screen(n)
-	p = np.random.randint(2, size=(n, n-1, 2))
-	wins = np.random.randint(3, size=(n-1, n-1))
-	wins -= 1
-	# p = np.load('p.npy')
-	# while True:
-	import time
-	scr.show(p, wins)
-	time.sleep(30)
+		st = State(p1, p2 , size)
+		print("training...")
+		st.play2()
+		st.winners = np.array(st.winners)
+		print(sum(st.winners == 1))
+		print(sum(st.winners == -1))
+		print(st.winners)
 

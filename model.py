@@ -90,7 +90,7 @@ class Model(nn.Module):
 
 
         all_features = self.relu(self.fc1(all_features))
-        Q_values = self.fc2(all_features)
+        Q_values = self.relu(self.fc2(all_features))
         return Q_values.squeeze(0)
 
     # AUXILIARY METHODS
