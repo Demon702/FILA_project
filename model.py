@@ -15,6 +15,7 @@ class Model(nn.Module):
         self.relu = nn.ReLU()
         self.fc1 = nn.Linear(4 * (self.size -2) * (self.size -2) , 16 * (self.size -2) * (self.size -2))
         self.fc2 = nn.Linear(16 * (self.size -2) * (self.size -2) , self.size * (self.size - 1) * 2)
+        self.sigmoid = nn.Sigmoid()
         # self.feature_extractor_part1 = nn.Sequential(
         #     nn.Conv2d(1, 20, kernel_size=5),
         #     nn.ReLU(),
@@ -76,10 +77,10 @@ class Model(nn.Module):
         columns = columns.unsqueeze(0).unsqueeze(0)
         # print(columns.shape)
         # print(torch.cat((rows[:,:, :-1, :] , columns[:,:,:,:-1]) , 0).shape)
-        feature1 = self.relu(self.cnn1(torch.cat((rows[:,:, :-1, :] , columns[:,:,:,:-1]) , 1)))
-        feature2 = self.relu(self.cnn2(torch.cat((rows[:,:, :-1, :] , columns[:,:,:,1:]) , 1)))
-        feature3 = self.relu(self.cnn3(torch.cat((rows[:,:, 1:, :] , columns[:,:,:,:-1]) , 1)))
-        feature4 = self.relu(self.cnn4(torch.cat((rows[:,:, 1:, :] , columns[:,:,:,1:]) , 1)))
+        feature1 = self.sigmoid(self.cnn1(torch.cat((rows[:,:, :-1, :] , columns[:,:,:,:-1]) , 1)))
+        feature2 = self.sigmoid(self.cnn2(torch.cat((rows[:,:, :-1, :] , columns[:,:,:,1:]) , 1)))
+        feature3 = self.sigmoid(self.cnn3(torch.cat((rows[:,:, 1:, :] , columns[:,:,:,:-1]) , 1)))
+        feature4 = self.sigmoid(self.cnn4(torch.cat((rows[:,:, 1:, :] , columns[:,:,:,1:]) , 1)))
         
         features = torch.cat((feature1, feature2 , feature3 , feature4) , 0)
         all_features = features.view(-1 , 4 * (self.size -2) * (self.size -2))
@@ -89,8 +90,8 @@ class Model(nn.Module):
         # H = self.feature_extractor_part2(H)  # NxL
 
 
-        all_features = self.relu(self.fc1(all_features))
-        Q_values = self.relu(self.fc2(all_features))
+        all_features = self.sigmoid(self.fc1(all_features))
+        Q_values = self.fc2(all_features)
         return Q_values.squeeze(0)
 
     # AUXILIARY METHODS

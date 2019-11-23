@@ -13,6 +13,7 @@ import copy
 
 class State:
 	def __init__(self, p1, p2 , size = 10):
+		self.win_reward = 5
 		self.size = size
 		self.total_squares = (size - 1)**2
 		self.board = np.zeros((size, size - 1 , 2) , dtype = np.int32)
@@ -96,8 +97,9 @@ class State:
 
 	def play(self, rounds=100):
 		for i in range(rounds):
-			if i % 1000 == 0:
-				print("Rounds {}".format(i))
+			# if i % 1000 == 0:
+			# 	print("Rounds {}".format(i))
+			print("Rounds {}".format(i))
 			while not self.isEnd:
 				# Player 1
 				reward = 1
@@ -113,6 +115,7 @@ class State:
 					actions = self.available_actions()
 					# print(actions)
 					# self.p1.current_state_Q_value = self.p1.next_state_Q_value
+					# print(max(self.p1.next_state_Q_value))
 					p1_action = self.p1.chooseAction(actions, self.board)
 					current_Q_value = self.p1.next_state_Q_value[p1_action]
 					reward = self.reward(p1_action , self.p1.symbol)
@@ -121,7 +124,7 @@ class State:
 					# 	print(p1.symbol , winner)
 					if winner == p1.symbol:
 						# print("entered")
-						reward += 10000
+						reward += self.win_reward 
 						self.winners.append(p1.symbol)
 					if self.no_of_boards == self.total_squares:
 						target = reward
@@ -146,10 +149,13 @@ class State:
 					self.p1.optimizer.zero_grad()
 					# Calculate loss and update
 					with torch.set_grad_enabled(True):
-						target = torch.tensor(target).cpu().float()
+						# target = torch.tensor(target).cpu().float()
 						tr = transforms.ToTensor()
-						current_Q_value = self.p1.model(tr(self.old_board))	[p1_action]
-						loss = self.loss(current_Q_value , target)
+						current_Q_value = self.p1.model(tr(self.old_board))
+						target_Q = torch.tensor(current_Q_value)
+						target_Q[p1_action] = target
+						# print(target_Q)
+						loss = self.loss(current_Q_value , target_Q)
 						loss.backward()
 						self.p1.optimizer.step()
 
@@ -170,10 +176,10 @@ class State:
 					winner = self.winner()
 					# if winner == 1 or winner == -1:
 						# print(p2.symbol , winner)
-					self.winners.append(winner)
 					if winner == p2.symbol:
+						self.winners.append(winner)
 						# print("entered")
-						reward += 10000
+						reward += self.win_reward 
 					if self.no_of_boards == self.total_squares:
 						target = reward
 						self.isEnd = True
@@ -196,12 +202,18 @@ class State:
 					# print(p2_action , reward , "p2")
 					self.p2.optimizer.zero_grad()
 					with torch.set_grad_enabled(True):
-						target = torch.tensor(target).cpu().float()
+						# target = torch.tensor(target).cpu().float()
 						tr = transforms.ToTensor()
-						current_Q_value = self.p2.model(tr(self.old_board))	[p2_action]
-						loss = self.loss(current_Q_value , target)
+						current_Q_value = self.p2.model(tr(self.old_board))
+						target_Q = torch.tensor(current_Q_value)
+						# print(target)
+						target_Q[p2_action] = target
+						loss = self.loss(current_Q_value.float() , target_Q.float())
+						# print(loss)
 						loss.backward()
 						self.p2.optimizer.step()
+					# for parameters in self.p2.model.parameters():
+					# 	print(parameters.grad)
 			# print(reward)
 			self.p1.savePolicy()
 			self.p2.savePolicy()
@@ -217,18 +229,25 @@ class State:
 				# self.p1.addState(board_hash)
 				# check board status if it is end
 
+	def change_turn(self, X):
+		if X == "A":
+			return "B"
+		if X == "B":
+			return "A"
 
 	def play2(self):
 		scr = Screen(self.size)
-		turn = "A"
+		turn = "B"
 		scr.show(self.board, self.grid_winners)
 		self.p2.model = Model(self.size)
-		self.p2.model.load_state_dict(torch.load("data/" + self.p2.name + "_Q_dict"))
+		self.p2.model.load_state_dict(torch.load("data/" + self.p2.name + "_Q_10_dict"))
+		tr = transforms.ToTensor()
+		# print(self.p2.model(tr(self.board)))
 		# A is human
 		while not self.isEnd:
 			# print("self.isEnd" , self.isEnd)
 			for event in pygame.event.get():
-				if turn == "A":
+				if turn == "B":
 					# quit the game when the player closes it
 					reward = 0
 					if event.type == pygame.QUIT:
@@ -260,11 +279,11 @@ class State:
 						if chosen_action not in available_actions:
 							continue
 						# print(actions)
-						# self.p1.current_state_Q_value = self.p1.next_state_Q_value
+						# self.p2.current_state_Q_value = self.p2.next_state_Q_value
 						reward = self.reward(chosen_action , self.p1.symbol)
 						winner = self.winner()
 						if winner == p1.symbol:
-							reward += 10000
+							reward += 10
 							self.winners.append(winner)
 						if self.no_of_boards == self.total_squares:
 							target = reward
@@ -277,10 +296,10 @@ class State:
 						if reward >= 1:
 							continue
 						else :
-							turn = "B"
+							turn = self.change_turn(turn)
 
 
-			if turn == "B":
+			if turn == "A":
 				print("came here")			
 				reward = 1
 				with torch.no_grad():
@@ -292,13 +311,15 @@ class State:
 					# print("-------------------------------------------------------")
 					actions = self.available_actions()
 					# print(len(actions))
-					# self.p1.current_state_Q_value = self.p1.next_state_Q_value
+					# self.p2.current_state_Q_value = self.p2.next_state_Q_value
 					p2_action = self.p2.chooseAction(actions, self.board)
+					print( self.p2.next_state_Q_value)
+					# pdb.set_trace()
 					current_Q_value = self.p2.next_state_Q_value[p2_action]
 					reward = self.reward(p2_action , self.p2.symbol)
 					winner = self.winner()
 					if winner == p2.symbol:
-						reward += 10000
+						reward += 10
 						self.winners.append(winner)
 					if self.no_of_boards == self.total_squares:
 						target = reward
@@ -308,7 +329,7 @@ class State:
 						self.old_board = self.board.copy()
 						self.updatestate(p2_action)
 					scr.show(self.board, self.grid_winners)
-				turn = "A"
+				turn = self.change_turn(turn)
 
 
 
@@ -316,10 +337,11 @@ class State:
 				
 	
 	# def available_positions
-
+lr_ = 0.00001
+exp_rate_ = 0.
 
 class Player:
-	def __init__(self, name, size, symbol, exp_rate=0.1):
+	def __init__(self, name, size, symbol, exp_rate=exp_rate_):
 		self.name = name
 		self.exp_rate = exp_rate
 		# self.states = []  # record all positions taken
@@ -329,8 +351,9 @@ class Player:
 		self.model = Model(size).cpu()
 		self.current_Q_value = 0
 		self.symbol = symbol
-		self.optimizer = optim.Adam(self.model.parameters(), lr=0.01)
+		self.optimizer = optim.Adam(self.model.parameters(), lr=lr_)
 		self.scheduler = lr_scheduler.StepLR(self.optimizer, step_size=10, gamma=0.2)
+		self.counter = 0
 	# def getHash(self, board):
 	# 	boardHash = str(board.reshape(board.shape[0] * bpard.shape[1] * board.shape[2]))
 	# 	return boardHash
@@ -352,6 +375,7 @@ class Player:
 			self.current_Q_value = np.max(valid_outputs)
 			self.random_action_taken = False
 		# print("{} takes action {}".format(self.name, action))
+		self.counter += 1
 		return action
 
 	# append a hash state
@@ -370,7 +394,7 @@ class Player:
 	# 	self.states = []
 
 	def savePolicy(self):
-		torch.save(self.model.state_dict() , 'data/' + self.name + "_Q_dict")
+		torch.save(self.model.state_dict() , 'data/' + self.name + "_Q_10_dict")
 
 	# def loadPolicy(self, file):
 	# 	fr = open(file, 'rb')
@@ -472,7 +496,7 @@ if __name__ == "__main__":
 
 		st = State(p1, p2 , size)
 		print("training...")
-		st.play(50000)
+		st.play(100)
 		st.winners = np.array(st.winners)
 		print(sum(st.winners == 1))
 		print(sum(st.winners == -1))
@@ -498,8 +522,8 @@ if __name__ == "__main__":
 		# scr.show(p, wins)
 		# time.sleep(30)
 		size = int(sys.argv[1])
-		p1 = Player("p1" , size , 1)
-		p2 = Player("p2" , size , -1)
+		p1 = Player("p1" , size , 1 , 0)
+		p2 = Player("p2" , size , -1 , 0)
 
 		st = State(p1, p2 , size)
 		print("training...")
