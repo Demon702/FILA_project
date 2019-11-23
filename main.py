@@ -29,9 +29,14 @@ class State:
 		self.winners = []
 
 	def getHash(self):
-		string = str(self.board.reshape((size - 1) * size * 2))
-		self.boardHash = int(string , 2)
-		return self.boardHash
+		string = [str(a) for a in self.board.reshape((size - 1) * size * 2)]
+		string = "".join(string)
+		array = np.zeros(2**((size - 1) * size * 2)) 
+		index = int(string , 2)
+		# print(index)
+		array[index] = 1
+		self.boardHash = array
+		return torch.tensor([self.boardHash])
 
 	def tuple_to_number(self , index ):
 		return 2*(self.size - 1)*index[0] + 2*index[1] + index[2]
@@ -102,8 +107,8 @@ class State:
 				# Player 1
 				reward = 1
 				with torch.no_grad():
-					tr = transforms.ToTensor()
-					outputs = self.p1.model(tr(self.board))
+					# tr = transforms.ToTensor()
+					outputs = self.p1.model(self.getHash())
 				outputs_numpy = outputs.numpy()
 
 				self.p1.next_state_Q_value = outputs_numpy
@@ -129,10 +134,11 @@ class State:
 					# take action and upate board state
 					else:
 						self.old_board = self.board.copy()
+						self.oldboardHash = self.getHash()
 						self.updatestate(p1_action)
 						with torch.no_grad():
-							tr = transforms.ToTensor()
-							outputs = self.p1.model(tr(self.board))
+							# tr = transforms.ToTensor()
+							outputs = self.p1.model(self.getHash())
 						outputs_numpy = outputs.numpy()
 						self.p1.next_state_Q_value = outputs_numpy
 						# print(outputs_numpy)
@@ -146,17 +152,19 @@ class State:
 					self.p1.optimizer.zero_grad()
 					# Calculate loss and update
 					with torch.set_grad_enabled(True):
-						target = torch.tensor(target).cpu().float()
-						tr = transforms.ToTensor()
-						current_Q_value = self.p1.model(tr(self.old_board))	[p1_action]
-						loss = self.loss(current_Q_value , target)
+						# target = torch.tensor(target).cpu().float()
+						# tr = transforms.ToTensor()
+						current_Q = self.p1.model(self.oldboardHash)
+						target_Q = torch.tensor(current_Q)
+						target_Q[p1_action] = target
+						loss = self.loss(current_Q , target_Q)
 						loss.backward()
 						self.p1.optimizer.step()
 
 				reward = 1
 				with torch.no_grad():
-					tr = transforms.ToTensor()
-					outputs = self.p2.model(tr(self.board))
+					# tr = transforms.ToTensor()
+					outputs = self.p2.model(self.getHash())
 				outputs_numpy = outputs.numpy()
 				self.p2.next_state_Q_value = outputs_numpy
 				while(reward >= 1 and not self.isEnd):
@@ -182,8 +190,8 @@ class State:
 						self.old_board = self.board.copy()
 						self.updatestate(p2_action)
 						with torch.no_grad():
-							tr = transforms.ToTensor()
-							outputs = self.p2.model(tr(self.board))
+							# tr = transforms.ToTensor()
+							outputs = self.p2.model(self.getHash())
 						outputs_numpy = outputs.numpy()
 						self.p2.next_state_Q_value = outputs_numpy
 						# print(len(self.available_actions))
@@ -196,10 +204,12 @@ class State:
 					# print(p2_action , reward , "p2")
 					self.p2.optimizer.zero_grad()
 					with torch.set_grad_enabled(True):
-						target = torch.tensor(target).cpu().float()
-						tr = transforms.ToTensor()
-						current_Q_value = self.p2.model(tr(self.old_board))	[p2_action]
-						loss = self.loss(current_Q_value , target)
+						# target = torch.tensor(target).cpu().float()
+						# tr = transforms.ToTensor()
+						current_Q = self.p2.model(self.oldboardHash)
+						target_Q = torch.tensor(current_Q)
+						target_Q[p2_action] = target
+						loss = self.loss(current_Q , target_Q)
 						loss.backward()
 						self.p2.optimizer.step()
 			# print(reward)
@@ -284,12 +294,13 @@ class State:
 				print("came here")			
 				reward = 1
 				with torch.no_grad():
-					tr = transforms.ToTensor()
-					outputs = self.p2.model(tr(self.board))
+					# tr = transforms.ToTensor()
+					outputs = self.p2.model(self.getHash())
 				outputs_numpy = outputs.numpy()
 				self.p2.next_state_Q_value = outputs_numpy
 				while(reward >= 1 and not self.isEnd):
 					# print("-------------------------------------------------------")
+					print(outputs_numpy)
 					actions = self.available_actions()
 					# print(len(actions))
 					# self.p1.current_state_Q_value = self.p1.next_state_Q_value
@@ -307,6 +318,11 @@ class State:
 					else:
 						self.old_board = self.board.copy()
 						self.updatestate(p2_action)
+					with torch.no_grad():
+						# tr = transforms.ToTensor()
+						outputs = self.p2.model(self.getHash())
+					outputs_numpy = outputs.numpy()
+					self.p2.next_state_Q_value = outputs_numpy
 					scr.show(self.board, self.grid_winners)
 				turn = "A"
 
@@ -321,22 +337,26 @@ class State:
 class Player:
 	def __init__(self, name, size, symbol, exp_rate=0.1):
 		self.name = name
-		self.exp_rate = exp_rate
+		self.exp_rate = 0,1
+		# self.exp_rate = exp_rate
+		self.counter = 0
 		# self.states = []  # record all positions taken
 		# self.lr = 0.2
-		# self.exp_rate = exp_rate
+		self.exp_rate = exp_rate
 		# self.decay_gamma = 0.9
 		self.model = Model(size).cpu()
 		self.current_Q_value = 0
 		self.symbol = symbol
-		self.optimizer = optim.Adam(self.model.parameters(), lr=0.01)
-		self.scheduler = lr_scheduler.StepLR(self.optimizer, step_size=10, gamma=0.2)
+		self.optimizer = optim.Adam(self.model.parameters(), lr=0.00001)
+		self.scheduler = lr_scheduler.StepLR(self.optimizer, step_size=100, gamma=0.1)
 	# def getHash(self, board):
 	# 	boardHash = str(board.reshape(board.shape[0] * bpard.shape[1] * board.shape[2]))
 	# 	return boardHash
 
 	def chooseAction(self, actions, current_board):
-		if np.random.uniform(0, 1) <= self.exp_rate:
+
+		epsilon = self.exp_rate * (1 / (self.counter + 1))
+		if np.random.uniform(0, 1) <= epsilon:
 			# take random action
 			# idx = np.random.choice(len(positions))
 			# print(actions)
@@ -351,6 +371,7 @@ class Player:
 			action = actions[np.argmax(valid_outputs)]
 			self.current_Q_value = np.max(valid_outputs)
 			self.random_action_taken = False
+		self.counter += 1
 		# print("{} takes action {}".format(self.name, action))
 		return action
 
